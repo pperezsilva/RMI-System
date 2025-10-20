@@ -40,8 +40,11 @@ public class ArchivoService extends UnicastRemoteObject implements ArchivoRemote
     @Override
     public List<ArchivoMetadata> listar(String token, String userId) throws RemoteException {
         assertAuth(token);
+        // Retornar TODOS los archivos del sistema (compartidos globalmente)
         List<ArchivoMetadata> out = new ArrayList<>();
-        for (ArchivoMetadata m : metas.values()) if (Objects.equals(m.getOwnerUserId(), userId)) out.add(m);
+        for (ArchivoMetadata m : metas.values()) {
+            out.add(m);
+        }
         return out;
     }
 
@@ -49,6 +52,15 @@ public class ArchivoService extends UnicastRemoteObject implements ArchivoRemote
     public void eliminar(String token, String fileId) throws RemoteException {
         assertAuth(token);
         metas.remove(fileId); blobs.remove(fileId);
+    }
+
+    @Override
+    public void renombrar(String token, String fileId, String nuevoNombre) throws RemoteException {
+        assertAuth(token);
+        ArchivoMetadata m = metas.get(fileId);
+        if (m == null) throw new RemoteException("Archivo no encontrado");
+        m.setNombre(nuevoNombre);
+        m.setVersion(m.getVersion() + 1);
     }
 
     @Override

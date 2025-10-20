@@ -11,6 +11,7 @@ public interface ArchivoRemote extends Remote {
     byte[] descargar(String token, String fileId) throws RemoteException;
     List<ArchivoMetadata> listar(String token, String userId) throws RemoteException;
     void eliminar(String token, String fileId) throws RemoteException;
+    void renombrar(String token, String fileId, String nuevoNombre) throws RemoteException;
     boolean bloquear(String token, String fileId, String userId) throws RemoteException;
     boolean desbloquear(String token, String fileId, String userId) throws RemoteException;
     void replicarUpsert(String internalToken, ArchivoMetadata meta, byte[] contenido) throws RemoteException;

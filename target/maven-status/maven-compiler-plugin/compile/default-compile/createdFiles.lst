@@ -8,6 +8,7 @@ com\example\dist\remote\AuditorRemote.class
 com\example\dist\remote\UsuarioRemote.class
 com\example\dist\common\TokenInfo.class
 com\example\dist\bootstrap\NodeServer.class
+com\example\dist\bootstrap\SimpleNodeBootstrap.class
 com\example\dist\remote\BalanceadorCargaRemote.class
 com\example\dist\common\Usuario.class
 com\example\dist\remote\NodoRemote.class

@@ -2,8 +2,10 @@ package com.example.dist.web;
 
 import com.example.dist.common.Usuario;
 import com.example.dist.common.TokenInfo;
+import com.example.dist.common.ArchivoMetadata;
 import com.example.dist.remote.ControladorSeguridadRemote;
 import com.example.dist.remote.UsuarioRemote;
+import com.example.dist.remote.ArchivoRemote;
 import com.example.dist.remote.BalanceadorCargaRemote;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -12,10 +14,12 @@ import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.Base64;
 
 public class WebServer {
     private static final int PORT = 8080;
     private static String currentToken = null;
+    private static String currentUserId = null;
     private static final ObjectMapper mapper = new ObjectMapper();
     
     public static void main(String[] args) throws Exception {
@@ -84,6 +88,8 @@ public class WebServer {
             switch (path) {
                 case "/":
                     return getIndexHtml();
+                case "/test":
+                    return getTestHtml();
                 case "/api/login":
                     return handleLogin(body);
                 case "/api/users":
@@ -92,6 +98,17 @@ public class WebServer {
                     break;
                 case "/api/authenticate":
                     return authenticateUser(body);
+                case "/api/files":
+                    if ("GET".equals(method)) return getFiles();
+                    if ("POST".equals(method)) return uploadFile(body);
+                    break;
+            }
+            
+            if (path.startsWith("/api/files/")) {
+                String fileId = path.substring(11); // Remove "/api/files/"
+                if ("DELETE".equals(method)) return deleteFile(fileId);
+                if ("PUT".equals(method)) return renameFile(fileId, body);
+                if ("GET".equals(method)) return downloadFile(fileId);
             }
             
             return "404 Not Found";
@@ -199,12 +216,136 @@ public class WebServer {
                 response.put("username", usuario.getUsername());
                 response.put("userId", usuario.getId());
                 response.put("roles", usuario.getRoles());
+                currentUserId = usuario.getId(); // Guardar ID para uso en archivos
                 System.out.println("[DEBUG] Información del usuario agregada a la respuesta");
             } else {
                 System.out.println("[DEBUG] No se encontró el usuario " + username + " en la lista");
             }
         }
         
+        return mapper.writeValueAsString(response);
+    }
+    
+    private static String getFiles() throws Exception {
+        if (currentToken == null || currentUserId == null) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "No token available. Login and authenticate first.");
+            return mapper.writeValueAsString(errorResponse);
+        }
+        
+        BalanceadorCargaRemote balanceador = (BalanceadorCargaRemote) 
+            Naming.lookup("rmi://localhost:21000/lb");
+        String endpoint = balanceador.obtenerEndpoint(currentToken, "archivo");
+        
+        ArchivoRemote archivoService = (ArchivoRemote) Naming.lookup(endpoint);
+        List<ArchivoMetadata> archivos = archivoService.listar(currentToken, currentUserId);
+        
+        return mapper.writeValueAsString(archivos);
+    }
+    
+    private static String uploadFile(String body) throws Exception {
+        if (currentToken == null || currentUserId == null) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "No token available. Login and authenticate first.");
+            return mapper.writeValueAsString(errorResponse);
+        }
+        
+        Map<String, String> data = mapper.readValue(body, Map.class);
+        String fileName = data.get("fileName");
+        String fileContent = data.get("fileContent"); // Base64 encoded
+        
+        if (fileName == null || fileContent == null) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "fileName and fileContent are required");
+            return mapper.writeValueAsString(errorResponse);
+        }
+        
+        // Decode base64 content
+        byte[] contenido = Base64.getDecoder().decode(fileContent);
+        
+        BalanceadorCargaRemote balanceador = (BalanceadorCargaRemote) 
+            Naming.lookup("rmi://localhost:21000/lb");
+        String endpoint = balanceador.obtenerEndpoint(currentToken, "archivo");
+        
+        ArchivoRemote archivoService = (ArchivoRemote) Naming.lookup(endpoint);
+        ArchivoMetadata metadata = archivoService.subir(currentToken, currentUserId, fileName, contenido);
+        
+        return mapper.writeValueAsString(metadata);
+    }
+    
+    private static String deleteFile(String fileId) throws Exception {
+        if (currentToken == null) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "No token available. Login first.");
+            return mapper.writeValueAsString(errorResponse);
+        }
+        
+        BalanceadorCargaRemote balanceador = (BalanceadorCargaRemote) 
+            Naming.lookup("rmi://localhost:21000/lb");
+        String endpoint = balanceador.obtenerEndpoint(currentToken, "archivo");
+        
+        ArchivoRemote archivoService = (ArchivoRemote) Naming.lookup(endpoint);
+        archivoService.eliminar(currentToken, fileId);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        response.put("message", "Archivo eliminado correctamente");
+        return mapper.writeValueAsString(response);
+    }
+    
+    private static String renameFile(String fileId, String body) throws Exception {
+        if (currentToken == null) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "No token available. Login first.");
+            return mapper.writeValueAsString(errorResponse);
+        }
+        
+        Map<String, String> data = mapper.readValue(body, Map.class);
+        String newName = data.get("newName");
+        
+        if (newName == null || newName.trim().isEmpty()) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "newName is required");
+            return mapper.writeValueAsString(errorResponse);
+        }
+        
+        BalanceadorCargaRemote balanceador = (BalanceadorCargaRemote) 
+            Naming.lookup("rmi://localhost:21000/lb");
+        String endpoint = balanceador.obtenerEndpoint(currentToken, "archivo");
+        
+        ArchivoRemote archivoService = (ArchivoRemote) Naming.lookup(endpoint);
+        archivoService.renombrar(currentToken, fileId, newName.trim());
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        response.put("message", "Archivo renombrado correctamente");
+        return mapper.writeValueAsString(response);
+    }
+    
+    private static String downloadFile(String fileId) throws Exception {
+        if (currentToken == null) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "No token available. Login first.");
+            return mapper.writeValueAsString(errorResponse);
+        }
+        
+        BalanceadorCargaRemote balanceador = (BalanceadorCargaRemote) 
+            Naming.lookup("rmi://localhost:21000/lb");
+        String endpoint = balanceador.obtenerEndpoint(currentToken, "archivo");
+        
+        ArchivoRemote archivoService = (ArchivoRemote) Naming.lookup(endpoint);
+        byte[] contenido = archivoService.descargar(currentToken, fileId);
+        
+        if (contenido == null) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Archivo no encontrado");
+            return mapper.writeValueAsString(errorResponse);
+        }
+        
+        // Return base64 encoded content
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        response.put("content", Base64.getEncoder().encodeToString(contenido));
         return mapper.writeValueAsString(response);
     }
     
@@ -216,391 +357,90 @@ public class WebServer {
         return "text/plain";
     }
     
+    private static String getTestHtml() {
+        return "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Test RMI</title></head>" +
+               "<body><h1>Test Sistema RMI</h1>" +
+               "<button onclick='testConnection()'>Test Conexion</button>" +
+               "<div id='result'></div><script>" +
+               "async function testConnection() {" +
+               "console.log('Boton clickeado');" +
+               "document.getElementById('result').innerHTML = 'Probando...';" +
+               "try { const response = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({}) });" +
+               "const data = await response.json();" +
+               "console.log('Respuesta:', data);" +
+               "document.getElementById('result').innerHTML = 'Exito: ' + JSON.stringify(data);" +
+               "} catch (error) {" +
+               "console.error('Error:', error);" +
+               "document.getElementById('result').innerHTML = 'Error: ' + error.message;" +
+               "}}</script></body></html>";
+    }
+    
     private static String getIndexHtml() {
-        return """
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema RMI Distribuido</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-        }
-        
-        .container {
-            background: white;
-            border-radius: 10px;
-            padding: 30px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-        }
-        
-        h1 {
-            color: #333;
-            text-align: center;
-            margin-bottom: 30px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .section {
-            margin-bottom: 30px;
-            padding: 20px;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            background: #fafafa;
-        }
-        
-        .section h2 {
-            color: #555;
-            border-bottom: 2px solid #667eea;
-            padding-bottom: 10px;
-        }
-        
-        .form-group {
-            margin-bottom: 15px;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-            color: #555;
-        }
-        
-        input[type="text"], input[type="password"] {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #ddd;
-            border-radius: 5px;
-            font-size: 16px;
-            transition: border-color 0.3s;
-        }
-        
-        input[type="text"]:focus, input[type="password"]:focus {
-            border-color: #667eea;
-            outline: none;
-        }
-        
-        button {
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            margin-right: 10px;
-            margin-bottom: 10px;
-            transition: transform 0.2s;
-        }
-        
-        button:hover {
-            transform: translateY(-2px);
-        }
-        
-        button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .result {
-            margin-top: 15px;
-            padding: 15px;
-            border-radius: 5px;
-            white-space: pre-wrap;
-            font-family: monospace;
-        }
-        
-        .user-info {
-            background: #e8f5e8;
-            border: 2px solid #4caf50;
-            border-radius: 8px;
-            padding: 15px;
-            margin-top: 10px;
-            font-family: 'Segoe UI', sans-serif;
-        }
-        
-        .user-info strong {
-            color: #2e7d32;
-        }
-        
-        .user-info small {
-            color: #666;
-            font-style: italic;
-        }
-        
-        .success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
-        .error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .user-list {
-            background: white;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            padding: 15px;
-            max-height: 300px;
-            overflow-y: auto;
-        }
-        
-        .user-item {
-            padding: 10px;
-            border-bottom: 1px solid #eee;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .user-item:last-child {
-            border-bottom: none;
-        }
-        
-        .status {
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 5px;
-            font-weight: bold;
-        }
-        
-        .status.connected {
-            background: #d4edda;
-            color: #155724;
-        }
-        
-        .status.disconnected {
-            background: #f8d7da;
-            color: #721c24;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🚀 Sistema RMI Distribuido - Panel Web</h1>
-        
-        <div id="status" class="status disconnected">
-            Estado: Desconectado - Haga clic en "Conectar" para iniciar
-        </div>
-        
-        <div id="userStatus" class="user-info" style="display: none;">
-            <h3 style="margin: 0 0 10px 0; color: #2e7d32;">👤 Usuario Autenticado</h3>
-            <div id="userInfo"></div>
-        </div>
-        
-        <div class="section">
-            <h2>🔑 Conexión al Sistema</h2>
-            <button onclick="connectToSystem()">Conectar al Sistema RMI</button>
-            <div id="connectionResult" class="result"></div>
-        </div>
-        
-        <div class="section">
-            <h2>👥 Gestión de Usuarios</h2>
-            
-            <div style="display: flex; gap: 20px; flex-wrap: wrap;">
-                <div style="flex: 1; min-width: 300px;">
-                    <h3>Crear Usuario</h3>
-                    <div class="form-group">
-                        <label>Nombre de Usuario:</label>
-                        <input type="text" id="newUsername" placeholder="Ingrese nombre de usuario">
-                    </div>
-                    <div class="form-group">
-                        <label>Contraseña:</label>
-                        <input type="password" id="newPassword" placeholder="Ingrese contraseña">
-                    </div>
-                    <button onclick="createUser()">Crear Usuario</button>
-                    <div id="createResult" class="result"></div>
-                </div>
-                
-                <div style="flex: 1; min-width: 300px;">
-                    <h3>Autenticar Usuario</h3>
-                    <div class="form-group">
-                        <label>Nombre de Usuario:</label>
-                        <input type="text" id="authUsername" placeholder="Nombre de usuario">
-                    </div>
-                    <div class="form-group">
-                        <label>Contraseña:</label>
-                        <input type="password" id="authPassword" placeholder="Contraseña">
-                    </div>
-                    <button onclick="authenticateUser()">Autenticar</button>
-                    <div id="authResult" class="result"></div>
-                </div>
-            </div>
-            
-            <div style="margin-top: 20px;">
-                <button onclick="loadUsers()">🔄 Actualizar Lista de Usuarios</button>
-                <div id="usersList" class="user-list" style="margin-top: 15px;"></div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        let connected = false;
-        
-        async function connectToSystem() {
-            try {
-                const response = await fetch('/api/login', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({})
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    connected = true;
-                    document.getElementById('status').className = 'status connected';
-                    document.getElementById('status').textContent = 'Estado: Conectado ✅ - Token: ' + data.token;
-                    document.getElementById('connectionResult').innerHTML = '<div class="success">✅ Conexión exitosa al sistema RMI</div>';
-                    await loadUsers();
-                } else {
-                    throw new Error(data.error || 'Error de conexión');
-                }
-            } catch (error) {
-                document.getElementById('connectionResult').innerHTML = '<div class="error">❌ Error: ' + error.message + '</div>';
-            }
-        }
-        
-        async function createUser() {
-            if (!connected) {
-                alert('Debe conectarse al sistema primero');
-                return;
-            }
-            
-            const username = document.getElementById('newUsername').value;
-            const password = document.getElementById('newPassword').value;
-            
-            if (!username || !password) {
-                alert('Complete todos los campos');
-                return;
-            }
-            
-            try {
-                const response = await fetch('/api/users', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username, password})
-                });
-                
-                const data = await response.json();
-                
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-                
-                document.getElementById('createResult').innerHTML = 
-                    '<div class="success">✅ Usuario creado: ' + data.username + ' (ID: ' + data.id + ')</div>';
-                
-                document.getElementById('newUsername').value = '';
-                document.getElementById('newPassword').value = '';
-                
-                await loadUsers();
-            } catch (error) {
-                document.getElementById('createResult').innerHTML = '<div class="error">❌ Error: ' + error.message + '</div>';
-            }
-        }
-        
-        async function authenticateUser() {
-            if (!connected) {
-                alert('Debe conectarse al sistema primero');
-                return;
-            }
-            
-            const username = document.getElementById('authUsername').value;
-            const password = document.getElementById('authPassword').value;
-            
-            if (!username || !password) {
-                alert('Complete todos los campos');
-                return;
-            }
-            
-            try {
-                const response = await fetch('/api/authenticate', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username, password})
-                });
-                
-                const data = await response.json();
-                
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-                
-                const resultClass = data.authenticated ? 'success' : 'error';
-                const resultIcon = data.authenticated ? '✅' : '❌';
-                let resultText = data.authenticated ? 'Autenticación exitosa' : 'Credenciales incorrectas';
-                
-                if (data.authenticated && data.username) {
-                    resultText += '<br><strong>Usuario:</strong> ' + data.username;
-                    if (data.roles && data.roles.length > 0) {
-                        resultText += '<br><strong>Roles:</strong> ' + data.roles.join(', ');
-                    }
-                    resultText += '<br><small>ID: ' + data.userId + '</small>';
-                    
-                    // Mostrar información del usuario en la sección superior
-                    const userStatus = document.getElementById('userStatus');
-                    const userInfo = document.getElementById('userInfo');
-                    userInfo.innerHTML = 
-                        '<strong>Nombre:</strong> ' + data.username + '<br>' +
-                        '<strong>Roles:</strong> ' + (data.roles ? data.roles.join(', ') : 'Ninguno') + '<br>' +
-                        '<small>ID: ' + data.userId + '</small>';
-                    userStatus.style.display = 'block';
-                }
-                
-                document.getElementById('authResult').innerHTML = 
-                    '<div class="' + resultClass + '">' + resultIcon + ' ' + resultText + '</div>';
-                
-            } catch (error) {
-                document.getElementById('authResult').innerHTML = '<div class="error">❌ Error: ' + error.message + '</div>';
-            }
-        }
-        
-        async function loadUsers() {
-            if (!connected) return;
-            
-            try {
-                const response = await fetch('/api/users');
-                const users = await response.json();
-                
-                if (users.error) {
-                    throw new Error(users.error);
-                }
-                
-                const usersList = document.getElementById('usersList');
-                
-                if (users.length === 0) {
-                    usersList.innerHTML = '<div style="text-align: center; color: #666;">No hay usuarios registrados</div>';
-                    return;
-                }
-                
-                usersList.innerHTML = users.map(user => 
-                    '<div class="user-item">' +
-                    '<div><strong>' + user.username + '</strong><br><small>ID: ' + user.id + '</small></div>' +
-                    '<div><span style="background: #e3f2fd; padding: 4px 8px; border-radius: 3px; font-size: 12px;">' +
-                    user.roles.join(', ') + '</span></div>' +
-                    '</div>'
-                ).join('');
-                
-            } catch (error) {
-                document.getElementById('usersList').innerHTML = '<div class="error">❌ Error cargando usuarios: ' + error.message + '</div>';
-            }
-        }
-    </script>
-</body>
-</html>
-""";
+        return "<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'>" +
+               "<meta name='viewport' content='width=device-width, initial-scale=1.0'>" +
+               "<title>Sistema RMI Distribuido</title><style>" +
+               "body{font-family:'Segoe UI',sans-serif;max-width:1200px;margin:0 auto;padding:20px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh}" +
+               ".container{background:white;border-radius:10px;padding:30px;box-shadow:0 10px 30px rgba(0,0,0,0.1)}" +
+               "h1{color:#333;text-align:center;margin-bottom:30px}" +
+               ".section{margin-bottom:30px;padding:20px;border:1px solid #e0e0e0;border-radius:8px;background:#fafafa}" +
+               ".section h2{color:#555;border-bottom:2px solid #667eea;padding-bottom:10px}" +
+               ".form-group{margin-bottom:15px}" +
+               "label{display:block;margin-bottom:5px;font-weight:bold;color:#555}" +
+               "input[type='text'],input[type='password'],input[type='file']{width:100%;padding:12px;border:2px solid #ddd;border-radius:5px;font-size:16px;transition:border-color 0.3s}" +
+               "input[type='text']:focus,input[type='password']:focus{border-color:#667eea;outline:none}" +
+               "button{background:linear-gradient(45deg,#667eea,#764ba2);color:white;border:none;padding:12px 24px;border-radius:5px;cursor:pointer;font-size:16px;margin-right:10px;margin-bottom:10px;transition:transform 0.2s}" +
+               "button:hover{transform:translateY(-2px)}" +
+               ".result{margin-top:15px;padding:15px;border-radius:5px;font-family:monospace}" +
+               ".success{background:#d4edda;color:#155724;border:1px solid #c3e6cb}" +
+               ".error{background:#f8d7da;color:#721c24;border:1px solid #f5c6cb}" +
+               ".user-info{background:#e8f5e8;border:2px solid #4caf50;border-radius:8px;padding:15px;margin-top:10px}" +
+               ".user-list{background:white;border:1px solid #ddd;border-radius:5px;padding:15px;max-height:300px;overflow-y:auto}" +
+               ".user-item{padding:10px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center}" +
+               ".user-item:last-child{border-bottom:none}" +
+               ".status{padding:10px;margin:10px 0;border-radius:5px;font-weight:bold}" +
+               ".status.connected{background:#d4edda;color:#155724}" +
+               ".status.disconnected{background:#f8d7da;color:#721c24}" +
+               "</style></head><body>" +
+               "<div class='container'>" +
+               "<h1>Sistema RMI Distribuido - Panel Web</h1>" +
+               "<div id='status' class='status disconnected'>Estado: Desconectado - Haga clic en 'Conectar' para iniciar</div>" +
+               "<div id='userStatus' class='user-info' style='display:none'><h3 style='margin:0 0 10px 0;color:#2e7d32'>Usuario Autenticado</h3><div id='userInfo'></div></div>" +
+               "<div class='section'><h2>Conexion al Sistema</h2><button onclick='connectToSystem()'>Conectar al Sistema RMI</button><div id='connectionResult' class='result'></div></div>" +
+               "<div class='section'><h2>Gestor de Archivos</h2>" +
+               "<div id='fileManagerSection' style='display:none'>" +
+               "<div style='display:flex;gap:20px;flex-wrap:wrap;margin-bottom:20px'>" +
+               "<div style='flex:1;min-width:300px'><h3>Subir Archivo</h3>" +
+               "<div class='form-group'><label>Seleccionar Archivo:</label><input type='file' id='fileInput' accept='*/*'></div>" +
+               "<button onclick='uploadFile()'>Subir Archivo</button><div id='uploadResult' class='result'></div></div>" +
+               "</div><div style='margin-top:20px'><button onclick='loadFiles()'>Actualizar Lista de Archivos</button>" +
+               "<div id='filesList' class='user-list' style='margin-top:15px'></div></div>" +
+               "</div>" +
+               "<div id='fileManagerDisabled' class='result error' style='margin-top:10px'>Para usar el gestor de archivos, debe conectarse al sistema y autenticar un usuario primero.</div>" +
+               "</div>" +
+               "<div class='section'><h2>Gestion de Usuarios</h2>" +
+               "<div style='display:flex;gap:20px;flex-wrap:wrap'>" +
+               "<div style='flex:1;min-width:300px'><h3>Crear Usuario</h3>" +
+               "<div class='form-group'><label>Nombre de Usuario:</label><input type='text' id='newUsername' placeholder='Ingrese nombre de usuario'></div>" +
+               "<div class='form-group'><label>Contraseña:</label><input type='password' id='newPassword' placeholder='Ingrese contraseña'></div>" +
+               "<button onclick='createUser()'>Crear Usuario</button><div id='createResult' class='result'></div></div>" +
+               "<div style='flex:1;min-width:300px'><h3>Autenticar Usuario</h3>" +
+               "<div class='form-group'><label>Nombre de Usuario:</label><input type='text' id='authUsername' placeholder='Nombre de usuario'></div>" +
+               "<div class='form-group'><label>Contraseña:</label><input type='password' id='authPassword' placeholder='Contraseña'></div>" +
+               "<button onclick='authenticateUser()'>Autenticar</button><div id='authResult' class='result'></div></div>" +
+               "</div><div style='margin-top:20px'><button onclick='loadUsers()'>Actualizar Lista de Usuarios</button><div id='usersList' class='user-list' style='margin-top:15px'></div></div></div>" +
+               "</div><script>" +
+               "let connected=false;" +
+               "async function connectToSystem(){try{const response=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const data=await response.json();if(data.success){connected=true;document.getElementById('status').className='status connected';document.getElementById('status').textContent='Estado: Conectado - Token: '+data.token;document.getElementById('connectionResult').innerHTML='<div class=\"success\">Conexion exitosa al sistema RMI</div>';await loadUsers()}else{throw new Error(data.error||'Error de conexion')}}catch(error){document.getElementById('connectionResult').innerHTML='<div class=\"error\">Error: '+error.message+'</div>'}}" +
+               "async function createUser(){if(!connected){alert('Debe conectarse al sistema primero');return}const username=document.getElementById('newUsername').value;const password=document.getElementById('newPassword').value;if(!username||!password){alert('Complete todos los campos');return}try{const response=await fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});const data=await response.json();if(data.error){throw new Error(data.error)}document.getElementById('createResult').innerHTML='<div class=\"success\">Usuario creado: '+data.username+' (ID: '+data.id+')</div>';document.getElementById('newUsername').value='';document.getElementById('newPassword').value='';await loadUsers()}catch(error){document.getElementById('createResult').innerHTML='<div class=\"error\">Error: '+error.message+'</div>'}}" +
+               "async function authenticateUser(){if(!connected){alert('Debe conectarse al sistema primero');return}const username=document.getElementById('authUsername').value;const password=document.getElementById('authPassword').value;if(!username||!password){alert('Complete todos los campos');return}try{const response=await fetch('/api/authenticate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});const data=await response.json();if(data.error){throw new Error(data.error)}const resultClass=data.authenticated?'success':'error';const resultIcon=data.authenticated?'✅':'❌';let resultText=data.authenticated?'Autenticacion exitosa':'Credenciales incorrectas';if(data.authenticated&&data.username){resultText+='<br><strong>Usuario:</strong> '+data.username;if(data.roles&&data.roles.length>0){resultText+='<br><strong>Roles:</strong> '+data.roles.join(', ')}resultText+='<br><small>ID: '+data.userId+'</small>';const userStatus=document.getElementById('userStatus');const userInfo=document.getElementById('userInfo');userInfo.innerHTML='<strong>Nombre:</strong> '+data.username+'<br><strong>Roles:</strong> '+(data.roles?data.roles.join(', '):'Ninguno')+'<br><small>ID: '+data.userId+'</small>';userStatus.style.display='block';document.getElementById('fileManagerSection').style.display='block';document.getElementById('fileManagerDisabled').style.display='none';await loadFiles()}document.getElementById('authResult').innerHTML='<div class=\"'+resultClass+'\">'+resultIcon+' '+resultText+'</div>'}catch(error){document.getElementById('authResult').innerHTML='<div class=\"error\">Error: '+error.message+'</div>'}}" +
+               "async function loadUsers(){if(!connected)return;try{const response=await fetch('/api/users');const users=await response.json();if(users.error){throw new Error(users.error)}const usersList=document.getElementById('usersList');if(users.length===0){usersList.innerHTML='<div style=\"text-align:center;color:#666\">No hay usuarios registrados</div>';return}usersList.innerHTML=users.map(user=>'<div class=\"user-item\"><div><strong>'+user.username+'</strong><br><small>ID: '+user.id+'</small></div><div><span style=\"background:#e3f2fd;padding:4px 8px;border-radius:3px;font-size:12px\">'+user.roles.join(', ')+'</span></div></div>').join('')}catch(error){document.getElementById('usersList').innerHTML='<div class=\"error\">Error cargando usuarios: '+error.message+'</div>'}}" +
+               "async function uploadFile(){const fileInput=document.getElementById('fileInput');const file=fileInput.files[0];if(!file){alert('Seleccione un archivo primero');return}try{const fileContent=await fileToBase64(file);const response=await fetch('/api/files',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fileName:file.name,fileContent:fileContent})});const data=await response.json();if(data.error){throw new Error(data.error)}document.getElementById('uploadResult').innerHTML='<div class=\"success\">Archivo subido: '+data.nombre+' ('+formatFileSize(data.tamano)+')</div>';fileInput.value='';await loadFiles()}catch(error){document.getElementById('uploadResult').innerHTML='<div class=\"error\">Error: '+error.message+'</div>'}}" +
+               "function fileToBase64(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.readAsDataURL(file);reader.onload=()=>{const result=reader.result.split(',')[1];resolve(result)};reader.onerror=error=>reject(error)})}" +
+               "async function loadFiles(){try{const response=await fetch('/api/files');const files=await response.json();if(files.error){throw new Error(files.error)}const filesList=document.getElementById('filesList');if(files.length===0){filesList.innerHTML='<div style=\"text-align:center;color:#666;padding:20px\">No hay archivos subidos</div>';return}filesList.innerHTML=files.map(file=>'<div class=\"user-item\"><div><strong>'+file.nombre+'</strong><br><small>Tamaño: '+formatFileSize(file.tamano)+' | ID: '+file.id.substring(0,8)+'...</small></div><div><button onclick=\"downloadFile(\\\''+file.id+'\\\')\">Descargar</button> <button onclick=\"renameFile(\\\''+file.id+'\\\')\">Renombrar</button> <button onclick=\"deleteFile(\\\''+file.id+'\\\')\">Eliminar</button></div></div>').join('')}catch(error){document.getElementById('filesList').innerHTML='<div class=\"error\">Error cargando archivos: '+error.message+'</div>'}}" +
+               "async function deleteFile(fileId){if(!confirm('¿Esta seguro que desea eliminar este archivo?'))return;try{const response=await fetch('/api/files/'+fileId,{method:'DELETE'});const data=await response.json();if(data.error){throw new Error(data.error)}await loadFiles();alert('Archivo eliminado correctamente')}catch(error){alert('Error eliminando archivo: '+error.message)}}" +
+               "async function renameFile(fileId){const newName=prompt('Ingrese el nuevo nombre para el archivo:');if(!newName||newName.trim()==='')return;try{const response=await fetch('/api/files/'+fileId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({newName:newName.trim()})});const data=await response.json();if(data.error){throw new Error(data.error)}await loadFiles();alert('Archivo renombrado correctamente')}catch(error){alert('Error renombrando archivo: '+error.message)}}" +
+               "async function downloadFile(fileId){try{const response=await fetch('/api/files/'+fileId);const data=await response.json();if(data.error){throw new Error(data.error)}const byteCharacters=atob(data.content);const byteNumbers=new Array(byteCharacters.length);for(let i=0;i<byteCharacters.length;i++){byteNumbers[i]=byteCharacters.charCodeAt(i)}const byteArray=new Uint8Array(byteNumbers);const blob=new Blob([byteArray]);const url=window.URL.createObjectURL(blob);const a=document.createElement('a');a.style.display='none';a.href=url;a.download='file_'+fileId.substring(0,8);document.body.appendChild(a);a.click();window.URL.revokeObjectURL(url);document.body.removeChild(a)}catch(error){alert('Error descargando archivo: '+error.message)}}" +
+               "function formatFileSize(bytes){if(bytes===0)return '0 Bytes';const k=1024;const sizes=['Bytes','KB','MB','GB'];const i=Math.floor(Math.log(bytes)/Math.log(k));return parseFloat((bytes/Math.pow(k,i)).toFixed(2))+' '+sizes[i]}" +
+               "</script></body></html>";
     }
 }

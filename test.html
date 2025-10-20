@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Test RMI</title>
+</head>
+<body>
+    <h1>Test Sistema RMI</h1>
+    <button onclick="testConnection()">Test Conexion</button>
+    <div id="result"></div>
+    
+    <script>
+        async function testConnection() {
+            console.log("Botón clickeado");
+            document.getElementById('result').innerHTML = 'Probando...';
+            
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({})
+                });
+                
+                const data = await response.json();
+                console.log("Respuesta:", data);
+                document.getElementById('result').innerHTML = 'Éxito: ' + JSON.stringify(data);
+            } catch (error) {
+                console.error("Error:", error);
+                document.getElementById('result').innerHTML = 'Error: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>
