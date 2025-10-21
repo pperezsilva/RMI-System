@@ -132,7 +132,6 @@ public class WebServer {
         
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
-        response.put("token", currentToken.substring(0, 20) + "...");
         return mapper.writeValueAsString(response);
     }
     
@@ -339,10 +338,21 @@ public class WebServer {
             return mapper.writeValueAsString(errorResponse);
         }
         
-        // Return base64 encoded content
+        // Obtener metadata del archivo para el nombre
+        List<ArchivoMetadata> archivos = archivoService.listar(currentToken, currentUserId);
+        String fileName = "archivo_" + fileId.substring(0, 8); // fallback
+        for (ArchivoMetadata archivo : archivos) {
+            if (archivo.getId().equals(fileId)) {
+                fileName = archivo.getNombre();
+                break;
+            }
+        }
+        
+        // Return base64 encoded content with filename
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("content", Base64.getEncoder().encodeToString(contenido));
+        response.put("fileName", fileName);
         return mapper.writeValueAsString(response);
     }
     
@@ -406,7 +416,7 @@ public class WebServer {
                ".status.disconnected{background:#f8d7da;color:#721c24}" +
                "</style></head><body>" +
                "<div class='container'>" +
-               "<h1>Sistema RMI Distribuido - Panel Web</h1>" +
+"<h1>Gestor de Archivos - Panel Web</h1>" +
                "<div id='status' class='status disconnected'>Estado: Desconectado - Haga clic en 'Conectar' para iniciar</div>" +
                "<div id='userStatus' class='user-info' style='display:none'><h3 style='margin:0 0 10px 0;color:#2e7d32'>Usuario Autenticado</h3><div id='userInfo'></div></div>" +
                "<div class='section'><h2>Conexion al Sistema</h2><div class='toolbar'><button class='btn' onclick='connectToSystem()'>Conectar al Sistema RMI</button></div><div id='connectionResult' class='result'></div></div>" +
@@ -435,7 +445,7 @@ public class WebServer {
                "</div><div style='margin-top:20px'><div class='toolbar'><button class='btn btn-secondary' onclick='loadUsers()'>Actualizar Lista de Usuarios</button></div><div id='usersList' class='user-list' style='margin-top:15px'></div></div></div>" +
                "</div><script>" +
                "let connected=false;" +
-               "async function connectToSystem(){try{const response=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const data=await response.json();if(data.success){connected=true;document.getElementById('status').className='status connected';document.getElementById('status').textContent='Estado: Conectado - Token: '+data.token;document.getElementById('connectionResult').innerHTML='<div class=\"success\">Conexion exitosa al sistema RMI</div>';await loadUsers()}else{throw new Error(data.error||'Error de conexion')}}catch(error){document.getElementById('connectionResult').innerHTML='<div class=\"error\">Error: '+error.message+'</div>'}}" +
+               "async function connectToSystem(){try{const response=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const data=await response.json();if(data.success){connected=true;document.getElementById('status').className='status connected';document.getElementById('status').textContent='Estado: Conectado al sistema RMI';document.getElementById('connectionResult').innerHTML='<div class=\"success\">Conexion exitosa al sistema RMI</div>';await loadUsers()}else{throw new Error(data.error||'Error de conexion')}}catch(error){document.getElementById('connectionResult').innerHTML='<div class=\"error\">Error: '+error.message+'</div>'}}" +
                "async function createUser(){if(!connected){alert('Debe conectarse al sistema primero');return}const username=document.getElementById('newUsername').value;const email=document.getElementById('newEmail').value;const password=document.getElementById('newPassword').value;if(!username||!email||!password){alert('Complete todos los campos');return}try{const response=await fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,email,password})});const data=await response.json();if(data.error){throw new Error(data.error)}document.getElementById('createResult').innerHTML='<div class=\"success\">Usuario creado: '+data.username+' ('+data.email+') (ID: '+data.id+')</div>';document.getElementById('newUsername').value='';document.getElementById('newEmail').value='';document.getElementById('newPassword').value='';await loadUsers()}catch(error){document.getElementById('createResult').innerHTML='<div class=\"error\">Error: '+error.message+'</div>'}}" +
                "async function authenticateUser(){if(!connected){alert('Debe conectarse al sistema primero');return}const email=document.getElementById('authEmail').value;const password=document.getElementById('authPassword').value;if(!email||!password){alert('Complete todos los campos');return}try{const response=await fetch('/api/authenticate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});const data=await response.json();if(data.error){throw new Error(data.error)}const resultClass=data.authenticated?'success':'error';const resultIcon=data.authenticated?'✅':'❌';let resultText=data.authenticated?'Autenticacion exitosa':'Credenciales incorrectas';if(data.authenticated&&(data.username||data.email)){resultText+='<br><strong>Usuario:</strong> '+(data.username||'');if(data.email){resultText+='<br><strong>Correo:</strong> '+data.email}if(data.roles&&data.roles.length>0){resultText+='<br><strong>Roles:</strong> '+data.roles.join(', ')}resultText+='<br><small>ID: '+data.userId+'</small>';const userStatus=document.getElementById('userStatus');const userInfo=document.getElementById('userInfo');userInfo.innerHTML='<strong>Nombre:</strong> '+(data.username||'')+'<br><strong>Correo:</strong> '+(data.email||'')+'<br><strong>Roles:</strong> '+(data.roles?data.roles.join(', '):'Ninguno')+'<br><small>ID: '+data.userId+'</small>';userStatus.style.display='block';document.getElementById('fileManagerSection').style.display='block';document.getElementById('fileManagerDisabled').style.display='none';await loadFiles()}document.getElementById('authResult').innerHTML='<div class=\"'+resultClass+'\">'+resultIcon+' '+resultText+'</div>'}catch(error){document.getElementById('authResult').innerHTML='<div class=\"error\">Error: '+error.message+'</div>'}}" +
                "async function loadUsers(){if(!connected)return;try{const response=await fetch('/api/users');const users=await response.json();if(users.error){throw new Error(users.error)}const usersList=document.getElementById('usersList');if(users.length===0){usersList.innerHTML='<div style=\"text-align:center;color:#666\">No hay usuarios registrados</div>';return}usersList.innerHTML=users.map(user=>'<div class=\"user-item\"><div><strong>'+user.username+'</strong><br><small>ID: '+user.id+'</small></div><div><span style=\"background:#e3f2fd;padding:4px 8px;border-radius:3px;font-size:12px\">'+user.roles.join(', ')+'</span></div></div>').join('')}catch(error){document.getElementById('usersList').innerHTML='<div class=\"error\">Error cargando usuarios: '+error.message+'</div>'}}" +
@@ -444,7 +454,7 @@ public class WebServer {
                "async function loadFiles(){try{const response=await fetch('/api/files');const files=await response.json();if(files.error){throw new Error(files.error)}const filesList=document.getElementById('filesList');if(files.length===0){filesList.innerHTML='<div style=\"text-align:center;color:#666;padding:20px\">No hay archivos subidos</div>';return}filesList.innerHTML=files.map(file=>'<div class=\"user-item\"><div><strong>'+file.nombre+'</strong><br><small>Tamaño: '+formatFileSize(file.tamano)+' | ID: '+file.id.substring(0,8)+'...</small></div><div class=\"btn-group\"><button class=\"btn btn-sm btn-success\" onclick=\"downloadFile(\\\''+file.id+'\\\')\">Descargar</button><button class=\"btn btn-sm btn-secondary\" onclick=\"renameFile(\\\''+file.id+'\\\')\">Renombrar</button><button class=\"btn btn-sm btn-danger\" onclick=\"deleteFile(\\\''+file.id+'\\\')\">Eliminar</button></div></div>').join('')}catch(error){document.getElementById('filesList').innerHTML='<div class=\"error\">Error cargando archivos: '+error.message+'</div>'}}" +
                "async function deleteFile(fileId){if(!confirm('¿Esta seguro que desea eliminar este archivo?'))return;try{const response=await fetch('/api/files/'+fileId,{method:'DELETE'});const data=await response.json();if(data.error){throw new Error(data.error)}await loadFiles();alert('Archivo eliminado correctamente')}catch(error){alert('Error eliminando archivo: '+error.message)}}" +
                "async function renameFile(fileId){const newName=prompt('Ingrese el nuevo nombre para el archivo:');if(!newName||newName.trim()==='')return;try{const response=await fetch('/api/files/'+fileId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({newName:newName.trim()})});const data=await response.json();if(data.error){throw new Error(data.error)}await loadFiles();alert('Archivo renombrado correctamente')}catch(error){alert('Error renombrando archivo: '+error.message)}}" +
-               "async function downloadFile(fileId){try{const response=await fetch('/api/files/'+fileId);const data=await response.json();if(data.error){throw new Error(data.error)}const byteCharacters=atob(data.content);const byteNumbers=new Array(byteCharacters.length);for(let i=0;i<byteCharacters.length;i++){byteNumbers[i]=byteCharacters.charCodeAt(i)}const byteArray=new Uint8Array(byteNumbers);const blob=new Blob([byteArray]);const url=window.URL.createObjectURL(blob);const a=document.createElement('a');a.style.display='none';a.href=url;a.download='file_'+fileId.substring(0,8);document.body.appendChild(a);a.click();window.URL.revokeObjectURL(url);document.body.removeChild(a)}catch(error){alert('Error descargando archivo: '+error.message)}}" +
+               "async function downloadFile(fileId){try{const response=await fetch('/api/files/'+fileId);const data=await response.json();if(data.error){throw new Error(data.error)}const byteCharacters=atob(data.content);const byteNumbers=new Array(byteCharacters.length);for(let i=0;i<byteCharacters.length;i++){byteNumbers[i]=byteCharacters.charCodeAt(i)}const byteArray=new Uint8Array(byteNumbers);const blob=new Blob([byteArray]);const url=window.URL.createObjectURL(blob);const a=document.createElement('a');a.style.display='none';a.href=url;a.download=data.fileName||'archivo';document.body.appendChild(a);a.click();window.URL.revokeObjectURL(url);document.body.removeChild(a)}catch(error){alert('Error descargando archivo: '+error.message)}}" +
                "function formatFileSize(bytes){if(bytes===0)return '0 Bytes';const k=1024;const sizes=['Bytes','KB','MB','GB'];const i=Math.floor(Math.log(bytes)/Math.log(k));return parseFloat((bytes/Math.pow(k,i)).toFixed(2))+' '+sizes[i]}" +
                "</script></body></html>";
     }
