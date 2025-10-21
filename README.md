@@ -1,5 +1,18 @@
 # Sistema distribuido Java (RMI): Usuarios, Archivos y Auditoría
 
+Para ejecutar activa los nodos en las terminales y ejecuta el servidor web:
+# Terminal 1:
+java -cp target/distributed-rmi-1.0-SNAPSHOT-shaded.jar com.example.dist.server.ControladorSeguridadService localhost 20000 mi-secreto-hmac
+
+# Terminal 2: 
+java -cp target/distributed-rmi-1.0-SNAPSHOT-shaded.jar com.example.dist.server.BalanceadorCargaService localhost 21000 token-interno-123
+
+# Terminal 3:
+java -cp target/distributed-rmi-1.0-SNAPSHOT-shaded.jar com.example.dist.bootstrap.NodeServer localhost 22001 rmi://localhost:21000/lb token-interno-123 nodo-1 usuario,archivo,auditor,nodo
+
+# Terminal 4:
+java -cp target/distributed-rmi-1.0-SNAPSHOT-shaded.jar com.example.dist.web.WebServer
+
 Componentes distribuidos (clases/servicios RMI):
 - Usuario (UsuarioService + UsuarioRemote)
 - Archivo (ArchivoService + ArchivoRemote)
