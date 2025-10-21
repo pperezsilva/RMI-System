@@ -12,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class UsuarioService extends UnicastRemoteObject implements UsuarioRemote {
     private final Map<String, Usuario> usuarios = new ConcurrentHashMap<>();
+    private final Map<String, String> emailIndex = new ConcurrentHashMap<>(); // email(normalizado) -> userId
     private final String internalToken; // para replicación
 
     public UsuarioService(String internalToken) throws RemoteException { this.internalToken = internalToken; }
@@ -20,13 +21,22 @@ public class UsuarioService extends UnicastRemoteObject implements UsuarioRemote
         if (token == null || token.isBlank()) throw new RemoteException("token requerido");
     }
 
+    private static String normEmail(String email) {
+        return email == null ? null : email.trim().toLowerCase(Locale.ROOT);
+    }
+
     @Override
-    public Usuario crear(String token, String username, String password) throws RemoteException {
+    public Usuario crear(String token, String username, String email, String password) throws RemoteException {
         assertAuth(token);
+        if (email == null || email.isBlank()) throw new RemoteException("email requerido");
+        String emailKey = normEmail(email);
+        if (emailIndex.containsKey(emailKey)) throw new RemoteException("email ya registrado");
         String id = UUID.randomUUID().toString();
         Usuario u = new Usuario(id, username);
+        u.setEmail(emailKey);
         u.setPasswordHash(Integer.toHexString(Objects.hash(password)));
         usuarios.put(id, u);
+        emailIndex.put(emailKey, id);
         // best-effort replication would call peers here
         return u;
     }
@@ -52,16 +62,23 @@ public class UsuarioService extends UnicastRemoteObject implements UsuarioRemote
     }
 
     @Override
-    public boolean autenticar(String token, String username, String password) throws RemoteException {
+    public boolean autenticar(String token, String email, String password) throws RemoteException {
         assertAuth(token);
-        return usuarios.values().stream().anyMatch(u -> Objects.equals(u.getUsername(), username)
-                && Objects.equals(u.getPasswordHash(), Integer.toHexString(Objects.hash(password))));
+        String emailKey = normEmail(email);
+        String userId = emailIndex.get(emailKey);
+        if (userId == null) return false;
+        Usuario u = usuarios.get(userId);
+        if (u == null) return false;
+        return Objects.equals(u.getPasswordHash(), Integer.toHexString(Objects.hash(password)));
     }
 
     @Override
     public void replicarUpsert(String internalToken, Usuario usuario) throws RemoteException {
         if (!Objects.equals(this.internalToken, internalToken)) throw new RemoteException("token interno invalido");
         usuarios.put(usuario.getId(), usuario);
+        if (usuario.getEmail() != null) {
+            emailIndex.put(normEmail(usuario.getEmail()), usuario.getId());
+        }
     }
 
     public static void export(String host, int port) throws Exception {

@@ -40,8 +40,8 @@ public class SimpleClient {
             
             // 6. Crear un usuario
             System.out.println("6. Creando usuario de prueba...");
-            Usuario nuevoUsuario = usuarioService.crear(token, "testuser", "password123");
-            System.out.println("Usuario creado: " + nuevoUsuario.getUsername() + " (ID: " + nuevoUsuario.getId() + ")");
+            Usuario nuevoUsuario = usuarioService.crear(token, "testuser", "testuser@example.com", "password123");
+            System.out.println("Usuario creado: " + nuevoUsuario.getUsername() + " (Email: " + nuevoUsuario.getEmail() + ", ID: " + nuevoUsuario.getId() + ")");
             
             // 7. Asignar rol al usuario
             System.out.println("7. Asignando rol USER al usuario...");
@@ -57,12 +57,12 @@ public class SimpleClient {
             
             // 9. Autenticar usuario
             System.out.println("9. Probando autenticación...");
-            boolean autenticado = usuarioService.autenticar(token, "testuser", "password123");
+            boolean autenticado = usuarioService.autenticar(token, "testuser@example.com", "password123");
             System.out.println("Autenticación exitosa: " + autenticado);
             
             // 10. Probar autenticación incorrecta
             System.out.println("10. Probando autenticación incorrecta...");
-            boolean autenticacionIncorrecta = usuarioService.autenticar(token, "testuser", "wrongpassword");
+            boolean autenticacionIncorrecta = usuarioService.autenticar(token, "testuser@example.com", "wrongpassword");
             System.out.println("Autenticación fallida (esperado): " + autenticacionIncorrecta);
             
             System.out.println("\n=== Prueba completada exitosamente ===");
